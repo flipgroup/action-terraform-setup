@@ -8,11 +8,11 @@ inputs:
   workspace:
     description: Terraform workspace name.
     required: true
-  ssh-private-key:
-    description: Optional SSH private key, added to ssh-agent.
+  github-token:
+    description: GitHub token used to authenticate HTTPS access to the Terraform module repository.
     default:
   github-module-repository:
-    description: Optional GitHub Terraform module repository as owner/name, added as HTTPS -> SSH clone target.
+    description: Optional GitHub Terraform module repository as owner/name, added as an authenticated HTTPS clone target.
     default:
   cache-plugin-dir:
     description: Cache the terraform plugin directory
@@ -33,9 +33,9 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # 6.0.1
       with:
         path: ${{ env.TF_PLUGIN_CACHE_DIR }}
-        key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+        key: ${{ runner.os }}-terraform-${{ inputs.version }}-${{ hashFiles('**/.terraform.lock.hcl') }}
         restore-keys: |
-          ${{ runner.os }}-terraform-
+          ${{ runner.os }}-terraform-${{ inputs.version }}-
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # @v4.0.1
@@ -49,20 +49,12 @@ runs:
         echo "TF_INPUT=false" >>"$GITHUB_ENV"
         echo "TF_WORKSPACE=${{ inputs.workspace }}" >>"$GITHUB_ENV"
       shell: bash
-    - name: Add SSH private key to ssh-agent
-      if: inputs.ssh-private-key != ''
-      env:
-        # note: using env var to avoid masked key output into workflow run log
-        SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
-      run: |
-        eval $(ssh-agent -s)
-        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >>"$GITHUB_ENV"
-        echo "$SSH_PRIVATE_KEY" | ssh-add -
-      shell: bash
     - name: Set GitHub Terraform module repository
-      if: inputs.github-module-repository != ''
+      if: inputs.github-module-repository != '' && inputs.github-token != ''
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         git config --global \
-          url."ssh://git@github.com/${{ inputs.github-module-repository }}".insteadOf \
+          url."https://x-access-token:${GH_TOKEN}@github.com/${{ inputs.github-module-repository }}".insteadOf \
           "https://github.com/${{ inputs.github-module-repository }}"
       shell: bash
