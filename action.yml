@@ -3,8 +3,11 @@ description: Setups up terraform for later plan and apply
 
 inputs:
   version:
-    description: Terraform version.
-    required: true
+    description: Terraform version. If omitted, falls back to a .terraform-version file in the version-file-directory.
+    default:
+  version-file-directory:
+    description: Location to look for the .terraform-version file, defaults to the ops subdirectory.
+    default: ops
   workspace:
     description: Terraform workspace name.
     required: true
@@ -22,6 +25,24 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve Terraform version
+      id: resolve-version
+      working-directory: ${{ inputs.version-file-directory }}
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.version }}" ]]; then
+          VERSION="${{ inputs.version }}"
+          echo "Using version from input: $VERSION"
+        elif [[ -f ".terraform-version" ]]; then
+          VERSION=$(cat .terraform-version | tr -d '[:space:]')
+          echo "Using version from .terraform-version file: $VERSION"
+        else
+          echo "::error::No Terraform version specified — provide the 'version' input or add a .terraform-version file."
+          exit 1
+        fi
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
     - name: Create Terraform plugin cache dir
       if: inputs.cache-plugin-dir
       shell: bash
@@ -33,14 +54,14 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # 6.0.1
       with:
         path: ${{ env.TF_PLUGIN_CACHE_DIR }}
-        key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+        key: ${{ runner.os }}-terraform-${{ steps.resolve-version.outputs.version }}-${{ hashFiles('**/.terraform.lock.hcl') }}
         restore-keys: |
-          ${{ runner.os }}-terraform-
+          ${{ runner.os }}-terraform-${{ steps.resolve-version.outputs.version }}-
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # @v4.0.1
       with:
-        terraform_version: ${{ inputs.version }}
+        terraform_version: ${{ steps.resolve-version.outputs.version }}
         terraform_wrapper: false
     - name: Configure environment variables
       run: |
@@ -53,8 +74,11 @@ runs:
       if: inputs.ssh-private-key != ''
       env:
         # note: using env var to avoid masked key output into workflow run log
+        # also explicitly tell github to mask it using the ::add-mask:: directive.
+        # This should already be done for secrets but this action has no guarantees it was a secret input.
         SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
       run: |
+        echo "::add-mask::$SSH_PRIVATE_KEY"
         eval $(ssh-agent -s)
         echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >>"$GITHUB_ENV"
         echo "$SSH_PRIVATE_KEY" | ssh-add -
